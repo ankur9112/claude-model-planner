@@ -1,0 +1,10 @@
+{
+  "name": "model-planner",
+  "displayName": "Model Planner",
+  "version": "0.1.0",
+  "description": "Routes delegated work to the cheapest Claude tier that can do it properly (Haiku/Sonnet/Opus/Fable with matching effort), with a guard hook that blocks heavy work from reaching light models. Also: skill catalog, out-of-tokens handoff, token audit.",
+  "author": { "name": "ankur9112" },
+  "repository": "https://github.com/ankur9112/claude-model-planner",
+  "license": "MIT",
+  "keywords": ["model-routing", "effort", "subagents", "token-savings", "skills"]
+}

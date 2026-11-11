@@ -1,0 +1,12 @@
+{
+  "name": "model-planner",
+  "owner": { "name": "ankur9112" },
+  "description": "Tiered model and effort routing for Claude Code, with a guard that keeps heavy work off light models.",
+  "plugins": [
+    {
+      "name": "model-planner",
+      "source": "./",
+      "description": "Tiered model + effort routing for delegated work, with a guard that never lets heavy work reach light models. Plus skill catalog, out-of-tokens handoff and token audit."
+    }
+  ]
+}
