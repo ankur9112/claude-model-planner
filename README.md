@@ -16,6 +16,7 @@ Only Haiku, Sonnet and Opus are used. Fable is switched off.
 | **`/model-planner:token-audit`** | Shows where delegated work went and walks through the biggest token savings. |
 | **`/model-planner:context-audit`** | Measures what the current project loads at the start of every session (CLAUDE.md files, rules, imports, skill listing), shows where the weight is, and suggests safe ways to trim. Read-only. |
 | **`/model-planner:doctor`** | Checks that the guard still works: runs it the way the hook runs it, checks agents, settings and your project's `.model-planner.json`, and with `--live` has real Claude Code attempt a bad dispatch. Read-only. |
+| **`/model-planner:vet`** | Checks a third-party plugin or skills repo BEFORE you install it: hooks and the scripts they run, shell commands in skills, tools and permissions, MCP servers, binaries, install scripts, and text that tries to steer Claude. Static and read-only; it runs nothing from the plugin and asks before downloading anything. |
 
 ## Install
 
@@ -70,6 +71,17 @@ The guard's built-in words are generic, and it cannot read your CLAUDE.md. So wo
 - If the file is invalid, it is ignored and the built-in rules still apply; the guard log records `project_config: invalid`.
 - Without the file, the same tasks are allowed through. A test in `tests/test_guard.py` documents that.
 
+### Using it with other plugins (for example Superpowers)
+
+The guard looks at the `model` that *any* plugin sets on a delegation, not only ours. [Superpowers](https://github.com/obra/superpowers)' subagent-driven-development skill tells Claude to pick the cheapest suitable model per role and to always set the model explicitly, so its dispatches are visible to the guard.
+
+- A cheap model for mechanical read-only work passes.
+- A Haiku "implementer" is sent up to Sonnet (our light tier is read-only), costing one extra turn.
+- A Sonnet reviewer of security, migration or authentication changes is sent to Opus.
+- A delegation with no model set inherits your session model, and the guard cannot judge it.
+
+**Tested only with simulated dispatches** shaped like that skill's published instructions. Superpowers was not installed or run. Check any other plugin with `/model-planner:vet` before installing it.
+
 ### What it deliberately does not do
 
 - It does not change your session model or any setting.
@@ -86,7 +98,9 @@ The guard's built-in words are generic, and it cannot read your CLAUDE.md. So wo
 
 ## What was tested
 
-- `python3 tests/test_guard.py`, `tests/test_scripts.py` and `tests/test_doctor.py`: 67 tests on the guard rules (including per-project words), the hook protocol, the catalog, the handoff, the context audit, the agent settings and the doctor.
+- `python3 tests/test_guard.py`, `tests/test_scripts.py`, `tests/test_doctor.py` and `tests/test_vet.py`: 93 tests on the guard rules (including per-project words and Superpowers-style dispatches), the hook protocol, the catalog, the handoff, the context audit, the agent settings, the doctor and the vet scanner.
+- The vet tests use a deliberately malicious fixture plugin (download-and-run hooks, credential theft, hidden shell commands in skills, binaries, an outside symlink). They check each risk is flagged, that no file from the fixture is ever executed or changed, and that terminal escape codes in a hostile plugin cannot reach your screen. They also caught a real bug: a hook script written the standard quoted way was not recognised as hook-run, which would have hidden a high-risk finding.
+- `vet` on plugins already on this machine: no high-risk findings. Two medium findings on installed design skills were false alarms (skills that tell Claude to *resist* "ignore previous instructions"), which is why the skill has Claude read around each finding.
 - The doctor's tests deliberately break a copy of the plugin (a guard that silently does nothing, a guard that crashes, `python3` missing, a wrong model on a tier, a light agent that can edit files) and check each is reported as a FAIL. They also caught a bug in the doctor itself.
 - `/model-planner:doctor --live` on a real install: reported healthy, and real Claude Code blocked a heavy task sent to the light tier.
 - `claude plugin validate .` passes.
@@ -99,6 +113,7 @@ Not tested: that each agent's effort level is applied (the test output does not 
 
 - **Routing covers delegated work only.** The main session's own usage is not routed. The biggest savings usually come from keeping context small - see `/model-planner:token-audit`.
 - **The guard matches keywords.** It is tuned to err upward and will sometimes send a simple task to a higher tier. It cannot understand a task; the skill and the agents' own escalation cover what keywords miss.
+- **Vet is a map of where to read, not a verdict.** It is keyword-based and static. It cannot see what a plugin's npm or pip dependencies or MCP servers do once running, can miss cleverly hidden code, and flags harmless text (for example a skill that warns Claude against "ignore previous instructions", or this repo's own `scripts/vet.py`, whose rule list contains the patterns it searches for). It never says a plugin is safe. It only reads folders you already have; the skill asks before cloning anything.
 - **The doctor proves the guard works, not that your work is safe.** Without `--live` it simulates the hook by running the command from `hooks/hooks.json` in a shell; it cannot prove Claude Code itself loaded the hook. `--live` does prove that (it costs about half a cent and can be inconclusive if the test model skips the dispatch). It does not check your main-session model or whether a task was routed well.
 - **The context audit gives estimates, from a partial view.** Token figures are bytes / 4. It sees instruction files, rules, imports and the personal and project skill listing, but not the system prompt, tool definitions, MCP tools, auto memory or plugin skills; `/context` in Claude Code shows the live total. Its "keep" and "candidate" tags come from headings alone and are hints, not judgments. It never edits anything.
 - **Skills cannot be sorted into category folders.** Claude Code only loads skills from `<skills-dir>/<name>/SKILL.md`. The index file is the category structure; the skills stay put.
@@ -121,10 +136,10 @@ To change a tier's model or effort, edit the frontmatter in `agents/<tier>.md`. 
 ```
 .claude-plugin/   plugin.json, marketplace.json
 agents/           light.md, standard.md, heavy.md, max.md
-skills/           route/, organize-skills/, handoff/, token-audit/, context-audit/, doctor/
+skills/           route/, organize-skills/, handoff/, token-audit/, context-audit/, doctor/, vet/
 hooks/hooks.json  guard on Agent dispatches; handoff on rate-limit stop
-scripts/          guard.py, skill_catalog.py, handoff.py, stats.py, context_audit.py, doctor.py
-tests/            test_guard.py, test_scripts.py, test_doctor.py
+scripts/          guard.py, skill_catalog.py, handoff.py, stats.py, context_audit.py, doctor.py, vet.py
+tests/            test_guard.py, test_scripts.py, test_doctor.py, test_vet.py
 ```
 
 ## Sources and credit

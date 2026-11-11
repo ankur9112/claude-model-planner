@@ -261,6 +261,57 @@ class ProjectConfigFile(unittest.TestCase):
             self.assertEqual(guard.load_project_keywords(proj), ([], "invalid"))
 
 
+class ThirdPartyDispatch(unittest.TestCase):
+    """Dispatches shaped like those of another workflow plugin.
+
+    Superpowers' subagent-driven-development skill says to pick the cheapest
+    model per role and to "always specify the model explicitly" on each dispatch
+    (read from its published skill text; Superpowers was NOT installed or run for
+    these tests). So the guard sees a `model` on an unpinned agent and can check it.
+    These are simulated payloads that document the intended interplay.
+    """
+
+    def test_cheap_model_is_allowed_for_mechanical_read_only_work(self):
+        r = guard.classify({"subagent_type": "general-purpose", "model": "haiku", "prompt": "List every file that imports the date helper and report the paths"})
+        self.assertEqual(r["decision"], "allow")
+
+    def test_haiku_implementer_is_sent_up_one_tier_not_blocked_outright(self):
+        # Superpowers suggests a cheap model for mechanical implementation. Our light tier is
+        # read-only, so the guard asks for Sonnet instead: one extra turn, safer result.
+        r = guard.classify({"subagent_type": "general-purpose", "model": "haiku", "prompt": "Implement the isolated function parse_date in utils.py exactly per the spec"})
+        self.assertEqual(r["decision"], "deny")
+        self.assertEqual(r["send_to"], "standard")
+        self.assertIn("model-planner:standard", r["reason"])
+
+    def test_sonnet_implementer_for_ordinary_work_passes(self):
+        r = guard.classify({"subagent_type": "general-purpose", "model": "sonnet", "prompt": "Implement the settings page toggle exactly as the plan describes"})
+        self.assertEqual(r["decision"], "allow")
+
+    def test_sonnet_reviewer_of_risky_code_is_sent_to_heavy(self):
+        for prompt in (
+            "Review the diff for security problems and race conditions",
+            "Review the migration of the users table",
+            "Review the change to the authentication flow",
+        ):
+            r = guard.classify({"subagent_type": "general-purpose", "model": "sonnet", "prompt": prompt})
+            self.assertEqual(r["decision"], "deny", prompt)
+            self.assertEqual(r["send_to"], "heavy", prompt)
+
+    def test_full_model_ids_are_understood(self):
+        r = guard.classify({"subagent_type": "other-plugin:worker", "model": "claude-haiku-5-5", "prompt": "Design the payments architecture"})
+        self.assertEqual(r["decision"], "deny")
+
+    def test_architecture_work_on_opus_is_never_blocked(self):
+        r = guard.classify({"subagent_type": "general-purpose", "model": "opus", "prompt": "Design the authentication architecture for the payments service"})
+        self.assertEqual(r["decision"], "allow")
+
+    def test_no_model_given_means_the_guard_stays_out_of_it(self):
+        # An unpinned dispatch with no model inherits the session model; the guard cannot judge it.
+        r = guard.classify({"subagent_type": "general-purpose", "prompt": "Design the authentication architecture for the payments service"})
+        self.assertEqual(r["decision"], "allow")
+        self.assertIsNone(r["effective"])
+
+
 class HookProtocol(unittest.TestCase):
     """Run the script the way Claude Code does: JSON on stdin, decision on stdout."""
 

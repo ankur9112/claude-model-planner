@@ -53,6 +53,8 @@ OTHER_FILES = [
     "scripts/skill_catalog.py",
     "scripts/stats.py",
     "scripts/context_audit.py",
+    "scripts/vet.py",
+    "skills/vet/SKILL.md",
     "skills/handoff/SKILL.md",
     "skills/organize-skills/SKILL.md",
     "skills/token-audit/SKILL.md",
