@@ -37,6 +37,18 @@ A clear spec does not make a task light. Migrations, performance work and securi
 - Use the agent name as `subagent_type` and **do not pass a `model` override** - each agent is already pinned. Never override a tier downwards.
 - Write a self-contained brief: the goal, the exact files or area, what "done" looks like, how to verify, and what to leave alone. The subagent sees none of this conversation.
 - Ask for a compact report (conclusions and `path:line`), not file dumps.
+- **`light` cannot see the project's CLAUDE.md** (it is set to start without it, to save tokens). You can. So put into its brief the exact command to run and every project rule that bears on it: prerequisites such as an emulator that must be running, forbidden commands, known environment traps.
+- **If CLAUDE.md warns that a check can pass without proving anything** (for example tests that pass because of an environment quirk), do not hand that check to `light`. Run it yourself, or use `standard`, which does see CLAUDE.md. Treat any `light` pass as a claim to confirm, not a result.
+
+## Project danger words
+
+The guard only knows generic risk words (security, migration, payments, and so on). It cannot read CLAUDE.md, so it does not know what is dangerous *in this project*. A project can list its own words in a `.model-planner.json` file at its root:
+
+```json
+{ "heavy_keywords": ["registrations", "firestore.rules", "firebase deploy"] }
+```
+
+Any delegation whose description or brief contains one of those words is blocked from Haiku and Sonnet and sent to `heavy`. When you start work in a project whose CLAUDE.md describes live systems, real user data, payments or deploys, and no such file exists, tell the user once and offer to create it from the words that CLAUDE.md treats as critical. Do not create it without their yes.
 
 ## The guard
 

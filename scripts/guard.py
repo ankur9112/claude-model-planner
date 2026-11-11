@@ -9,6 +9,11 @@ whose model it cannot determine (those inherit the session model).
 Reads the hook JSON on stdin, prints a deny decision on stdout when needed.
 Standard library only; works on Python 3.8+.
 
+A project can add its own heavy-work words in a .model-planner.json file
+({"heavy_keywords": ["registrations", "firebase deploy"]}) at or above the
+working directory; those block Haiku and Sonnet the same way the built-in
+signals do.
+
 It also refuses any dispatch that asks for the Fable model, which this setup
 does not use (it needs paid credits).
 
@@ -32,6 +37,13 @@ PLUGIN_PREFIX = "model-planner:"
 LOG_DIR = os.path.join(os.path.expanduser("~"), ".claude", "model-planner")
 LOG_FILE = os.path.join(LOG_DIR, "guard.log")
 LOG_MAX_BYTES = 1000000
+
+# Optional per-project file with extra words that mark work as heavy in that project.
+CONFIG_NAME = ".model-planner.json"
+CONFIG_MAX_BYTES = 20000
+CONFIG_MAX_KEYWORDS = 200
+CONFIG_MAX_KEYWORD_LEN = 60
+CONFIG_MAX_LEVELS = 12
 
 # --- Signals -----------------------------------------------------------------
 # Each entry: (label, regex). Matched against lower-cased description + prompt
@@ -107,7 +119,52 @@ def _signals(text, table):
     return [label for label, pattern in table if re.search(pattern, text)]
 
 
-def classify(tool_input):
+def load_project_keywords(cwd):
+    """Extra heavy-work keywords from the nearest .model-planner.json at or above cwd.
+
+    Returns (keywords, status) with status "none" (no file), "ok", or "invalid"
+    (file found but unusable; ignored). Keywords are plain words or phrases,
+    matched case-insensitively as whole words - never as regular expressions.
+    """
+    if not isinstance(cwd, str) or not cwd:
+        return [], "none"
+    d = os.path.abspath(cwd)
+    for _ in range(CONFIG_MAX_LEVELS):
+        path = os.path.join(d, CONFIG_NAME)
+        if os.path.isfile(path):
+            try:
+                if os.path.getsize(path) > CONFIG_MAX_BYTES:
+                    return [], "invalid"
+                with open(path) as fh:
+                    data = json.load(fh)
+            except Exception:
+                return [], "invalid"
+            words = data.get("heavy_keywords") if isinstance(data, dict) else None
+            if not isinstance(words, list):
+                return [], "invalid"
+            clean = []
+            for w in words[:CONFIG_MAX_KEYWORDS]:
+                if isinstance(w, str):
+                    w = " ".join(w.lower().split())
+                    if 1 <= len(w) <= CONFIG_MAX_KEYWORD_LEN:
+                        clean.append(w)
+            return clean, "ok"
+        parent = os.path.dirname(d)
+        if parent == d:
+            break
+        d = parent
+    return [], "none"
+
+
+def _project_signals(text, words):
+    hits = []
+    for w in words or []:
+        if re.search(r"(?<![a-z0-9])" + re.escape(w) + r"(?![a-z0-9])", text):
+            hits.append("project:" + w)
+    return hits
+
+
+def classify(tool_input, extra_heavy=None):
     """Pure decision function. Returns a dict:
     {"decision": "allow"|"deny", "effective": model|None, "signals": [...],
      "send_to": tier|None, "reason": str}
@@ -162,7 +219,7 @@ def classify(tool_input):
     text = NEGATION.sub(" ", raw.lower())
     rank = RANK[effective]
 
-    heavy = _signals(text, NEEDS_HEAVY)
+    heavy = _signals(text, NEEDS_HEAVY) + _project_signals(text, extra_heavy)
     if rank <= RANK["sonnet"] and heavy:
         result.update(decision="deny", signals=heavy, send_to="heavy")
     elif rank == RANK["haiku"]:
@@ -212,7 +269,8 @@ def main():
         return 0
     tool_input = payload.get("tool_input") or {}
 
-    result = classify(tool_input)
+    extra, cfg_status = load_project_keywords(payload.get("cwd"))
+    result = classify(tool_input, extra)
     guard_off = os.environ.get("MODEL_PLANNER_GUARD", "").lower() == "off"
     # The log records routing facts only - never the prompt text.
     _log(
@@ -224,6 +282,7 @@ def main():
             "decision": "allow(guard-off)" if (guard_off and result["decision"] == "deny") else result["decision"],
             "send_to": result["send_to"],
             "signals": result["signals"],
+            "project_config": cfg_status,
         }
     )
     if result["decision"] == "deny" and not guard_off:

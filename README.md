@@ -55,6 +55,20 @@ Three layers, so one failing does not put heavy work on a light model:
 
 The guard's rules are covered by tests: `python3 tests/test_guard.py`.
 
+### Per-project danger words
+
+The guard's built-in words are generic, and it cannot read your CLAUDE.md. So work that is risky only in *your* project (say, editing database security rules on a live site) can pass as routine. Fix that with a `.model-planner.json` file at the project root:
+
+```json
+{ "heavy_keywords": ["registrations", "firestore.rules", "firebase deploy"] }
+```
+
+- Matching is case-insensitive, whole-word and literal (not regular expressions). "firebase deploy" will not match "firebase deployment".
+- A match blocks Haiku and Sonnet and sends the task to `heavy`. It never blocks `heavy` or `max`.
+- The file is found from the working folder or any folder above it. At most 200 words, 60 characters each.
+- If the file is invalid, it is ignored and the built-in rules still apply; the guard log records `project_config: invalid`.
+- Without the file, the same tasks are allowed through. A test in `tests/test_guard.py` documents that.
+
 ### What it deliberately does not do
 
 - It does not change your session model or any setting.
@@ -66,11 +80,12 @@ The guard's rules are covered by tests: `python3 tests/test_guard.py`.
 - **`light` starts without the project's CLAUDE.md** (`omitClaudeMd: true`) and stops after 20 turns (`maxTurns`). It is read-only, so it does not need the project's conventions, and its brief says to run only what it was given. In a measured test with a 115 KB CLAUDE.md, a light dispatch used about 6.2k tokens with the setting and about 33.1k without (four runs, consistent to within 1%). That is roughly 27k tokens saved per light dispatch on a file that size.
 - **`standard` stops after 40 turns.** It keeps the project's CLAUDE.md, because it edits code and needs the conventions.
 - **`heavy` and `max` have no turn cap** and keep the project's CLAUDE.md.
+- **The catch:** `light` does not see your project's rules. The routing skill tells Claude to copy the relevant command and rules into its brief, and to keep any check that can "pass without proving anything" out of `light`. If you would rather `light` always saw CLAUDE.md, delete the `omitClaudeMd` line in `agents/light.md` and accept the extra tokens.
 - `omitClaudeMd` needs Claude Code 2.1.271 or later. The caps are judgment values; change them in `agents/*.md`.
 
 ## What was tested
 
-- `python3 tests/test_guard.py` and `python3 tests/test_scripts.py`: 32 tests on the guard rules, the hook protocol, the catalog, the handoff, the context audit and the agent settings.
+- `python3 tests/test_guard.py` and `python3 tests/test_scripts.py`: 40 tests on the guard rules (including per-project words), the hook protocol, the catalog, the handoff, the context audit and the agent settings.
 - `claude plugin validate .` passes.
 - Live, with the main session on Haiku: `standard` ran on Sonnet 5.5, `heavy` and `max` ran on Opus 5.5, and a dispatch of "design the authentication architecture for the payments service" to `light` was blocked by the guard.
 - In that live run, each subagent used about 35k tokens just to start, before doing any work. That is why the routing rules say not to delegate small tasks.

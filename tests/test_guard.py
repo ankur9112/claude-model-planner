@@ -168,6 +168,99 @@ class AllowedPaths(unittest.TestCase):
             self.assertEqual(guard.classify(bad)["decision"], "allow")
 
 
+PROJECT_WORDS = ["registrations", "firestore.rules", "firebase deploy"]
+PROJECT_TASKS = [
+    "Edit firestore.rules so the client can read the data",
+    "Show registrations to the page",
+    "Run Firebase Deploy to publish the build",
+]
+
+
+class ProjectKeywords(unittest.TestCase):
+    def test_project_words_block_sonnet_and_haiku(self):
+        for task in PROJECT_TASKS:
+            for agent in (LIGHT, STANDARD):
+                r = guard.classify({"subagent_type": agent, "prompt": task}, PROJECT_WORDS)
+                self.assertEqual(r["decision"], "deny", "%s / %s" % (agent, task))
+                self.assertEqual(r["send_to"], "heavy")
+                self.assertTrue(any(s.startswith("project:") for s in r["signals"]))
+            r = guard.classify({"subagent_type": "general-purpose", "prompt": task, "model": "sonnet"}, PROJECT_WORDS)
+            self.assertEqual(r["decision"], "deny")
+
+    def test_without_the_words_the_same_tasks_slip_through(self):
+        # Documents why the file exists: the built-in rules cannot know these words.
+        for task in PROJECT_TASKS:
+            self.assertEqual(guard.classify({"subagent_type": STANDARD, "prompt": task})["decision"], "allow", task)
+
+    def test_heavy_and_max_never_blocked_by_project_words(self):
+        for task in PROJECT_TASKS:
+            for agent in (HEAVY, MAX):
+                self.assertEqual(guard.classify({"subagent_type": agent, "prompt": task}, PROJECT_WORDS)["decision"], "allow")
+
+    def test_matching_is_whole_word_and_literal(self):
+        ok = ["Rename the file firestoreXrules", "Mention preregistrations in the readme", "Add a firebase deployment note"]
+        for task in ok:
+            self.assertEqual(guard.classify({"subagent_type": STANDARD, "prompt": task}, PROJECT_WORDS)["decision"], "allow", task)
+
+    def test_unrelated_work_still_allowed(self):
+        r = guard.classify({"subagent_type": STANDARD, "prompt": "Add a loading spinner to the landing page button"}, PROJECT_WORDS)
+        self.assertEqual(r["decision"], "allow")
+
+
+class ProjectConfigFile(unittest.TestCase):
+    def _hook(self, cwd, agent, prompt):
+        env = dict(os.environ, MODEL_PLANNER_LOG="off")
+        payload = json.dumps({"tool_name": "Agent", "cwd": cwd, "tool_input": {"subagent_type": agent, "prompt": prompt}})
+        p = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "guard.py")], input=payload.encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env)
+        return p.returncode, p.stdout.decode().strip()
+
+    def _project(self, base, content, name=".model-planner.json"):
+        proj = os.path.join(base, "proj")
+        sub = os.path.join(proj, "src", "deep")
+        os.makedirs(sub)
+        if content is not None:
+            with open(os.path.join(proj, name), "w") as fh:
+                fh.write(content)
+        return proj, sub
+
+    def test_config_found_from_a_subfolder(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as base:
+            proj, sub = self._project(base, json.dumps({"heavy_keywords": ["Registrations", "  firebase   deploy "]}))
+            for cwd in (proj, sub):
+                code, out = self._hook(cwd, STANDARD, "Show registrations in the admin page")
+                self.assertEqual(code, 0)
+                self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny", cwd)
+            code, out = self._hook(sub, STANDARD, "Run firebase deploy now")
+            self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny")
+            code, out = self._hook(sub, STANDARD, "Add a spinner to the button")
+            self.assertEqual((code, out), (0, ""))
+
+    def test_no_file_or_bad_file_falls_back_to_builtin_rules_without_crashing(self):
+        import tempfile
+        bad = [None, "not json", "[]", '{"heavy_keywords": "registrations"}', '{"heavy_keywords": [1, null, {"a": 1}, ""]}', "x" * 30000]
+        for content in bad:
+            with tempfile.TemporaryDirectory() as base:
+                proj, _ = self._project(base, content)
+                code, out = self._hook(proj, STANDARD, "Show registrations in the admin page")
+                self.assertEqual((code, out), (0, ""), repr(content)[:40])  # ignored: built-ins only
+                code, out = self._hook(proj, STANDARD, "Design the authentication architecture")
+                self.assertEqual(json.loads(out)["hookSpecificOutput"]["permissionDecision"], "deny")
+
+    def test_status_is_reported_and_keywords_capped(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as base:
+            proj, _ = self._project(base, json.dumps({"heavy_keywords": ["w%d" % i for i in range(500)] + ["x" * 100]}))
+            words, status = guard.load_project_keywords(proj)
+            self.assertEqual(status, "ok")
+            self.assertEqual(len(words), guard.CONFIG_MAX_KEYWORDS)
+            self.assertNotIn("x" * 100, words)
+        self.assertEqual(guard.load_project_keywords(None), ([], "none"))
+        with tempfile.TemporaryDirectory() as base:
+            proj, _ = self._project(base, "not json")
+            self.assertEqual(guard.load_project_keywords(proj), ([], "invalid"))
+
+
 class HookProtocol(unittest.TestCase):
     """Run the script the way Claude Code does: JSON on stdin, decision on stdout."""
 
