@@ -141,5 +141,139 @@ class Stats(unittest.TestCase):
             self.assertIn("allowed 1, blocked 1", stdout)
 
 
+def snapshot(root):
+    """Every path under root with its size and mtime, to prove nothing was touched."""
+    snap = {}
+    for dirpath, dirnames, files in os.walk(root):
+        for name in dirnames + files:
+            p = os.path.join(dirpath, name)
+            st = os.stat(p)
+            snap[p] = (st.st_size, st.st_mtime_ns)
+    return snap
+
+
+class ContextAudit(unittest.TestCase):
+    def _build(self, base):
+        home = os.path.join(base, "home")
+        parent = os.path.join(base, "work")
+        proj = os.path.join(parent, "proj")
+        os.makedirs(os.path.join(home, ".claude"))
+        os.makedirs(os.path.join(proj, "docs"))
+        os.makedirs(os.path.join(proj, ".claude", "rules"))
+        with open(os.path.join(home, ".claude", "CLAUDE.md"), "w") as fh:
+            fh.write("# Personal\nBe brief.\n")
+        with open(os.path.join(parent, "CLAUDE.md"), "w") as fh:
+            fh.write("# Parent folder rules\nShared across projects.\n")
+        body = ["# Project", "See @docs/api.md and @missing.md, mail a@b.com, literal `@docs/skip.md`.", ""]
+        body += ["## Non-negotiable rules"] + ["Never deploy on Friday. SECRET-SENTINEL-TEXT"] * 60
+        body += ["", "## Brand colour matrix"] + ["Row of colour data."] * 200
+        with open(os.path.join(proj, "CLAUDE.md"), "w") as fh:
+            fh.write("\n".join(body))
+        with open(os.path.join(proj, "docs", "api.md"), "w") as fh:
+            fh.write("# API\nImports the project file back: @../CLAUDE.md\n" + "endpoint\n" * 50)
+        with open(os.path.join(proj, "docs", "skip.md"), "w") as fh:
+            fh.write("# Skip\nmust not load\n")
+        with open(os.path.join(proj, ".claude", "rules", "always.md"), "w") as fh:
+            fh.write("Always run the linter.\n")
+        with open(os.path.join(proj, ".claude", "rules", "api-only.md"), "w") as fh:
+            fh.write("---\npaths:\n  - src/api/**\n---\nAPI rules only.\n")
+        with open(os.path.join(proj, "HUGE.md"), "w") as fh:
+            fh.write("filler line of text\n" * 3000)
+        return home, proj
+
+    def _run(self, home, proj):
+        return run("context_audit.py", ["--project", proj], home)
+
+    def test_report_scope_and_safety(self):
+        with tempfile.TemporaryDirectory() as base:
+            home, proj = self._build(base)
+            before = snapshot(base)
+            code, out, err = self._run(home, proj)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(snapshot(base), before, "audit must be read-only")
+
+            # Loaded at launch: user file, ancestor file, project file, import, always-on rule.
+            for needle in ("~/.claude/CLAUDE.md", "work/CLAUDE.md", "proj/CLAUDE.md", "docs/api.md", "rules/always.md"):
+                self.assertIn(needle, out)
+            self.assertIn("(imported by", out)
+            # Not loaded: missing import, code-span import, email, path-scoped rule (listed separately).
+            self.assertNotIn("missing.md", out)
+            self.assertNotIn("skip.md", out)
+            self.assertIn("PATH-SCOPED RULES", out)
+            self.assertIn("api-only.md", out)
+            launch_part = out.split("PATH-SCOPED RULES")[0]
+            self.assertNotIn("api-only.md", launch_part)
+            # Oversized file diagnosed with the right tags.
+            self.assertIn("lines over the 200-line guidance", out)
+            self.assertRegex(out, r"Brand colour matrix.*\[candidate: reads like reference material\]")
+            self.assertRegex(out, r"Non-negotiable rules.*\[keep: reads like standing rules\]")
+            self.assertIn("HUGE.md", out.split("LARGE DOCS")[1])
+            self.assertIn("Do NOT use @import", out)
+            # Headings and sizes only - never instruction text.
+            self.assertNotIn("SECRET-SENTINEL-TEXT", out)
+            self.assertNotIn("Never deploy on Friday", out)
+
+    def test_one_huge_list_of_rules_is_called_out_with_item_stats(self):
+        with tempfile.TemporaryDirectory() as base:
+            home = os.path.join(base, "home")
+            proj = os.path.join(base, "p")
+            os.makedirs(os.path.join(home, ".claude"))
+            os.makedirs(proj)
+            rules = "\n".join("%d. **Rule %d.** %s" % (i, i, "Explanation sentence about the rule. " * 40) for i in range(1, 21))
+            with open(os.path.join(proj, "CLAUDE.md"), "w") as fh:
+                fh.write("# P\n" + "Intro line.\n" * 210 + "\n## Rules of the house\n" + rules + "\n## Stack\nPython.\n")
+            before = snapshot(base)
+            code, out, err = self._run(home, proj)
+            self.assertEqual(code, 0, err)
+            self.assertEqual(snapshot(base), before)
+            self.assertIn("but it is the largest block", out)
+            self.assertRegex(out, r"-> 20 items, averaging \d+ tok each, longest \d+ tok")
+            self.assertIn("a list of 20 items", out)
+            self.assertIn("one-line statement of each rule", out)
+            self.assertNotIn("Explanation sentence", out)
+
+    def test_import_cycle_terminates_and_counts_each_file_once(self):
+        with tempfile.TemporaryDirectory() as base:
+            home, proj = self._build(base)
+            code, out, _ = self._run(home, proj)
+            self.assertEqual(code, 0)
+            self.assertEqual(out.count("docs/api.md"), 1)
+
+    def test_empty_project_and_missing_home_files(self):
+        with tempfile.TemporaryDirectory() as base:
+            home = os.path.join(base, "home")
+            proj = os.path.join(base, "empty")
+            os.makedirs(home)
+            os.makedirs(proj)
+            code, out, err = self._run(home, proj)
+            self.assertEqual(code, 0, err)
+            self.assertIn("no instruction files found", out)
+            self.assertIn("No instruction file is over", out)
+
+
+class AgentSettings(unittest.TestCase):
+    def _head(self, name):
+        with open(os.path.join(ROOT, "agents", name + ".md")) as fh:
+            return fh.read().split("---")[1]
+
+    def test_light_agent_is_lean_and_capped(self):
+        head = self._head("light")
+        self.assertIn("omitClaudeMd: true", head)
+        self.assertRegex(head, r"maxTurns: \d+")
+        self.assertIn("model: haiku", head)
+        self.assertIn("tools: Read, Grep, Glob, Bash", head)  # still read-only by tool list
+
+    def test_standard_is_capped_but_keeps_project_instructions(self):
+        head = self._head("standard")
+        self.assertRegex(head, r"maxTurns: \d+")
+        self.assertNotIn("omitClaudeMd", head)  # it needs the project's conventions
+
+    def test_heavy_and_max_are_not_capped_and_keep_instructions(self):
+        for name in ("heavy", "max"):
+            head = self._head(name)
+            self.assertNotIn("maxTurns", head)
+            self.assertNotIn("omitClaudeMd", head)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

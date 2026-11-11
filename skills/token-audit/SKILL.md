@@ -30,7 +30,7 @@ You cannot run these yourself; they are the user's commands.
 - **Clear between unrelated tasks.** `/clear` is free; a long session resends its whole history on every request.
 - **Model and effort for the session.** Opus for planning and hard work; Sonnet for a long run of simple edits. Lower effort for simple work - thinking is billed as output.
 - **Do not set `CLAUDE_CODE_SUBAGENT_MODEL`.** It silently changes the model of every unpinned subagent, which can put heavy work on a light model. Pinned tier agents are the safe way.
-- **Keep CLAUDE.md short** (under about 200 lines). Move workflow-specific instructions into skills, which load only when used.
+- **Keep CLAUDE.md short** (under about 200 lines). Run `/model-planner:context-audit` to see what the project loads at every session start and where the weight is. Move workflow-specific instructions into skills or path-scoped rules, which load only when used. `@imports` do not save anything: they load at launch.
 - **Trim the skill listing.** Run `/model-planner:organize-skills` and set rarely used categories to name-only.
 - **Turn off MCP servers you are not using** (`/mcp`). Prefer command-line tools such as `gh` where they exist.
 - **Delegate bulk reading** (logs, test output, wide searches) to `model-planner:light` so it never enters the main context.

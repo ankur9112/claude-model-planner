@@ -14,6 +14,7 @@ Only Haiku, Sonnet and Opus are used. Fable is switched off.
 | **`/model-planner:organize-skills`** | Groups all your installed skills by category into one index file and suggests which to list by name only. |
 | **`/model-planner:handoff`** | Writes a handoff file so another AI tool can carry on if Claude runs out of usage. Also written automatically when a turn ends on a rate-limit error. |
 | **`/model-planner:token-audit`** | Shows where delegated work went and walks through the biggest token savings. |
+| **`/model-planner:context-audit`** | Measures what the current project loads at the start of every session (CLAUDE.md files, rules, imports, skill listing), shows where the weight is, and suggests safe ways to trim. Read-only. |
 
 ## Install
 
@@ -60,9 +61,16 @@ The guard's rules are covered by tests: `python3 tests/test_guard.py`.
 - It does not touch delegations to other agents that carry no model override - those inherit your session model, which is the safe default.
 - It does not force delegation. A subagent starts with an empty context and has to re-read everything, so delegating small or tightly linked work costs more, not less. Published measurements from a similar plugin ([AqueGen/model-routing](https://github.com/AqueGen/model-routing)) found routing saved about a sixth where delegation was already happening, and cost about a fifth more where it pushed delegation that would not otherwise have happened.
 
+## Token settings on the agents
+
+- **`light` starts without the project's CLAUDE.md** (`omitClaudeMd: true`) and stops after 20 turns (`maxTurns`). It is read-only, so it does not need the project's conventions, and its brief says to run only what it was given. In a measured test with a 115 KB CLAUDE.md, a light dispatch used about 6.2k tokens with the setting and about 33.1k without (four runs, consistent to within 1%). That is roughly 27k tokens saved per light dispatch on a file that size.
+- **`standard` stops after 40 turns.** It keeps the project's CLAUDE.md, because it edits code and needs the conventions.
+- **`heavy` and `max` have no turn cap** and keep the project's CLAUDE.md.
+- `omitClaudeMd` needs Claude Code 2.1.271 or later. The caps are judgment values; change them in `agents/*.md`.
+
 ## What was tested
 
-- `python3 tests/test_guard.py` and `python3 tests/test_scripts.py`: 25 tests on the guard rules, the hook protocol, the catalog and the handoff.
+- `python3 tests/test_guard.py` and `python3 tests/test_scripts.py`: 32 tests on the guard rules, the hook protocol, the catalog, the handoff, the context audit and the agent settings.
 - `claude plugin validate .` passes.
 - Live, with the main session on Haiku: `standard` ran on Sonnet 5.5, `heavy` and `max` ran on Opus 5.5, and a dispatch of "design the authentication architecture for the payments service" to `light` was blocked by the guard.
 - In that live run, each subagent used about 35k tokens just to start, before doing any work. That is why the routing rules say not to delegate small tasks.
@@ -73,6 +81,7 @@ Not tested: that each agent's effort level is applied (the test output does not 
 
 - **Routing covers delegated work only.** The main session's own usage is not routed. The biggest savings usually come from keeping context small - see `/model-planner:token-audit`.
 - **The guard matches keywords.** It is tuned to err upward and will sometimes send a simple task to a higher tier. It cannot understand a task; the skill and the agents' own escalation cover what keywords miss.
+- **The context audit gives estimates, from a partial view.** Token figures are bytes / 4. It sees instruction files, rules, imports and the personal and project skill listing, but not the system prompt, tool definitions, MCP tools, auto memory or plugin skills; `/context` in Claude Code shows the live total. Its "keep" and "candidate" tags come from headings alone and are hints, not judgments. It never edits anything.
 - **Skills cannot be sorted into category folders.** Claude Code only loads skills from `<skills-dir>/<name>/SKILL.md`. The index file is the category structure; the skills stay put.
 - **Claude cannot fail over to another provider on its own.** A subscription usage limit is shared by all Claude models, and Anthropic does not support running Claude Code against non-Claude models. The handoff file is the practical route. Whether the automatic handoff hook fires on a subscription limit, rather than an API rate limit, is unconfirmed.
 
@@ -93,9 +102,9 @@ To change a tier's model or effort, edit the frontmatter in `agents/<tier>.md`. 
 ```
 .claude-plugin/   plugin.json, marketplace.json
 agents/           light.md, standard.md, heavy.md, max.md
-skills/           route/, organize-skills/, handoff/, token-audit/
+skills/           route/, organize-skills/, handoff/, token-audit/, context-audit/
 hooks/hooks.json  guard on Agent dispatches; handoff on rate-limit stop
-scripts/          guard.py, skill_catalog.py, handoff.py, stats.py
+scripts/          guard.py, skill_catalog.py, handoff.py, stats.py, context_audit.py
 tests/            test_guard.py, test_scripts.py
 ```
 

@@ -3,6 +3,7 @@ name: standard
 description: STANDARD tier (Sonnet, medium effort). One well-scoped task with a clear spec - a contained edit or bug fix, a small feature in a known place, tests for existing code, everyday documents, straightforward data analysis. Not for architecture, migrations, security-sensitive changes, concurrency, or unclear root causes.
 model: sonnet
 effort: medium
+maxTurns: 40
 disallowedTools: Agent
 color: blue
 ---
