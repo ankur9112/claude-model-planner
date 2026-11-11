@@ -15,6 +15,7 @@ Only Haiku, Sonnet and Opus are used. Fable is switched off.
 | **`/model-planner:handoff`** | Writes a handoff file so another AI tool can carry on if Claude runs out of usage. Also written automatically when a turn ends on a rate-limit error. |
 | **`/model-planner:token-audit`** | Shows where delegated work went and walks through the biggest token savings. |
 | **`/model-planner:context-audit`** | Measures what the current project loads at the start of every session (CLAUDE.md files, rules, imports, skill listing), shows where the weight is, and suggests safe ways to trim. Read-only. |
+| **`/model-planner:doctor`** | Checks that the guard still works: runs it the way the hook runs it, checks agents, settings and your project's `.model-planner.json`, and with `--live` has real Claude Code attempt a bad dispatch. Read-only. |
 
 ## Install
 
@@ -85,7 +86,9 @@ The guard's built-in words are generic, and it cannot read your CLAUDE.md. So wo
 
 ## What was tested
 
-- `python3 tests/test_guard.py` and `python3 tests/test_scripts.py`: 40 tests on the guard rules (including per-project words), the hook protocol, the catalog, the handoff, the context audit and the agent settings.
+- `python3 tests/test_guard.py`, `tests/test_scripts.py` and `tests/test_doctor.py`: 67 tests on the guard rules (including per-project words), the hook protocol, the catalog, the handoff, the context audit, the agent settings and the doctor.
+- The doctor's tests deliberately break a copy of the plugin (a guard that silently does nothing, a guard that crashes, `python3` missing, a wrong model on a tier, a light agent that can edit files) and check each is reported as a FAIL. They also caught a bug in the doctor itself.
+- `/model-planner:doctor --live` on a real install: reported healthy, and real Claude Code blocked a heavy task sent to the light tier.
 - `claude plugin validate .` passes.
 - Live, with the main session on Haiku: `standard` ran on Sonnet 5.5, `heavy` and `max` ran on Opus 5.5, and a dispatch of "design the authentication architecture for the payments service" to `light` was blocked by the guard.
 - In that live run, each subagent used about 35k tokens just to start, before doing any work. That is why the routing rules say not to delegate small tasks.
@@ -96,6 +99,7 @@ Not tested: that each agent's effort level is applied (the test output does not 
 
 - **Routing covers delegated work only.** The main session's own usage is not routed. The biggest savings usually come from keeping context small - see `/model-planner:token-audit`.
 - **The guard matches keywords.** It is tuned to err upward and will sometimes send a simple task to a higher tier. It cannot understand a task; the skill and the agents' own escalation cover what keywords miss.
+- **The doctor proves the guard works, not that your work is safe.** Without `--live` it simulates the hook by running the command from `hooks/hooks.json` in a shell; it cannot prove Claude Code itself loaded the hook. `--live` does prove that (it costs about half a cent and can be inconclusive if the test model skips the dispatch). It does not check your main-session model or whether a task was routed well.
 - **The context audit gives estimates, from a partial view.** Token figures are bytes / 4. It sees instruction files, rules, imports and the personal and project skill listing, but not the system prompt, tool definitions, MCP tools, auto memory or plugin skills; `/context` in Claude Code shows the live total. Its "keep" and "candidate" tags come from headings alone and are hints, not judgments. It never edits anything.
 - **Skills cannot be sorted into category folders.** Claude Code only loads skills from `<skills-dir>/<name>/SKILL.md`. The index file is the category structure; the skills stay put.
 - **Claude cannot fail over to another provider on its own.** A subscription usage limit is shared by all Claude models, and Anthropic does not support running Claude Code against non-Claude models. The handoff file is the practical route. Whether the automatic handoff hook fires on a subscription limit, rather than an API rate limit, is unconfirmed.
@@ -117,10 +121,10 @@ To change a tier's model or effort, edit the frontmatter in `agents/<tier>.md`. 
 ```
 .claude-plugin/   plugin.json, marketplace.json
 agents/           light.md, standard.md, heavy.md, max.md
-skills/           route/, organize-skills/, handoff/, token-audit/, context-audit/
+skills/           route/, organize-skills/, handoff/, token-audit/, context-audit/, doctor/
 hooks/hooks.json  guard on Agent dispatches; handoff on rate-limit stop
-scripts/          guard.py, skill_catalog.py, handoff.py, stats.py, context_audit.py
-tests/            test_guard.py, test_scripts.py
+scripts/          guard.py, skill_catalog.py, handoff.py, stats.py, context_audit.py, doctor.py
+tests/            test_guard.py, test_scripts.py, test_doctor.py
 ```
 
 ## Sources and credit
